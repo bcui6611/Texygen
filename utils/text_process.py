@@ -71,12 +71,15 @@ def get_dict(word_set):
         index += 1
     return word_index_dict, index_word_dict
 
-def text_precess(train_text_loc, test_text_loc=None):
+
+def text_precess(train_text_loc, test_text_loc=None, train_outfile=None):
     train_tokens = get_tokenlized(train_text_loc)
+
     if test_text_loc is None:
         test_tokens = list()
     else:
         test_tokens = get_tokenlized(test_text_loc)
+
     word_set = get_word_list(train_tokens + test_tokens)
     [word_index_dict, index_word_dict] = get_dict(word_set)
 
@@ -84,7 +87,14 @@ def text_precess(train_text_loc, test_text_loc=None):
         sequence_len = len(max(train_tokens, key=len))
     else:
         sequence_len = max(len(max(train_tokens, key=len)), len(max(test_tokens, key=len)))
+
+    if train_outfile is None:
+        train_outfile = 'save/oracle.txt'
+
+    with open(train_outfile, 'w') as outfile:
+            outfile.write(text_to_code(train_tokens, word_index_dict, sequence_len))
+
     with open('save/eval_data.txt', 'w') as outfile:
         outfile.write(text_to_code(test_tokens, word_index_dict, sequence_len))
 
-    return sequence_len, len(word_index_dict) + 1
+    return sequence_len, len(word_index_dict) + 1, word_index_dict, index_word_dict

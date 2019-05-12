@@ -11,15 +11,15 @@ from utils.metrics.Nll import Nll
 from utils.oracle.OracleLstm import OracleLstm
 from utils.utils import *
 
-
 def pre_train_epoch_gen(sess, trainable_model, data_loader):
     # Pre-train the generator using MLE for one epoch
     supervised_g_losses = []
     data_loader.reset_pointer()
 
     for it in range(data_loader.num_batch):
-        batch = data_loader.next_batch()
-        _, g_loss, _, _ = trainable_model.pretrain_step(sess, batch, .8)
+        #batch = data_loader.next_batch()
+        sentences, conv_features = data_loader.next_data_batch()
+        _, g_loss, _, _ = trainable_model.pretrain_step(sess, sentences, conv_features, .8)
         supervised_g_losses.append(g_loss)
 
     return np.mean(supervised_g_losses)
@@ -49,8 +49,8 @@ def generate_samples_gen(sess, trainable_model, batch_size, generated_num, outpu
 
 
 class Leakgan(Gan):
-    def __init__(self, oracle=None):
-        super().__init__()
+    def __init__(self, config, oracle=None):
+        super().__init__(config)
         # you can change parameters, generator here
         self.vocab_size = 20
         self.emb_dim = 32
@@ -61,7 +61,7 @@ class Leakgan(Gan):
         flags.DEFINE_boolean('resD', False, 'Training or testing a D model')
         flags.DEFINE_integer('length', 20, 'The length of toy data')
         flags.DEFINE_string('model', "", 'Model NAME')
-        self.sequence_length = FLAGS.length
+        self.sequence_length = 20 # FLAGS.length
         self.filter_size = [2, 3]
         self.num_filters = [100, 200]
         self.l2_reg_lambda = 0.2
@@ -128,11 +128,12 @@ class Leakgan(Gan):
         generate_samples_gen(self.sess, self.generator, self.batch_size, self.generate_num, self.generator_file)
         self.dis_data_loader.load_train_data(self.oracle_file, self.generator_file)
         for _ in range(3):
-            self.dis_data_loader.next_batch()
-            x_batch, y_batch = self.dis_data_loader.next_batch()
+            #self.dis_data_loader.next_batch()
+            x_batch, y_batch, conv_batch = self.dis_data_loader.next_data_batch()
             feed = {
                 self.discriminator.D_input_x: x_batch,
                 self.discriminator.D_input_y: y_batch,
+                self.discriminator.D_input_conv: conv_batch
             }
             _, _ = self.sess.run([self.discriminator.D_loss, self.discriminator.D_train_op], feed)
             self.generator.update_feature_function(self.discriminator)
@@ -361,12 +362,20 @@ class Leakgan(Gan):
                 print('epoch:' + str(epoch) + '--' + str(epoch_))
                 self.train_discriminator()
 
-    def init_real_trainng(self, data_loc=None):
-        from utils.text_process import text_precess, text_to_code
-        from utils.text_process import get_tokenlized, get_word_list, get_dict
+    def init_real_training(self, data_loc=None):
+        #from utils.text_process import text_precess, text_to_code
+        #from utils.text_process import get_tokenlized, get_word_list, get_dict
+        from dataset import prepare_train_data
+
         if data_loc is None:
             data_loc = 'data/image_coco.txt'
-        self.sequence_length, self.vocab_size = text_precess(data_loc)
+
+        #self.sequence_length, self.vocab_size, word_index_dict, index_word_dict = text_precess(data_loc, self.oracle_file)
+
+        dataset, self.sequence_length = prepare_train_data(self.config, data_loc)
+        self.vocab_size = dataset.vocab_size()
+        word_index_dict, idnex_work_dict = dataset.get_dict()
+
 
         goal_out_size = sum(self.num_filters)
         discriminator = Discriminator(sequence_length=self.sequence_length, num_classes=2, vocab_size=self.vocab_size,
@@ -385,16 +394,21 @@ class Leakgan(Gan):
                               num_filters=self.num_filters, goal_out_size=goal_out_size, D_model=discriminator,
                               step_size=4)
         self.set_generator(generator)
-        gen_dataloader = DataLoader(batch_size=self.batch_size, seq_length=self.sequence_length)
+        gen_dataloader = DataLoader(batch_size=self.batch_size, seq_length=self.sequence_length, dataset=dataset)
         oracle_dataloader = None
-        dis_dataloader = DisDataloader(batch_size=self.batch_size, seq_length=self.sequence_length)
+        dis_dataloader = DisDataloader(batch_size=self.batch_size, seq_length=self.sequence_length, dataset=dataset)
 
         self.set_data_loader(gen_loader=gen_dataloader, dis_loader=dis_dataloader, oracle_loader=oracle_dataloader)
+
+        """
         tokens = get_tokenlized(data_loc)
         word_set = get_word_list(tokens)
         [word_index_dict, index_word_dict] = get_dict(word_set)
+        
         with open(self.oracle_file, 'w') as outfile:
             outfile.write(text_to_code(tokens, word_index_dict, self.sequence_length))
+        """
+
         return word_index_dict, index_word_dict
 
     def init_real_metric(self):
@@ -409,7 +423,8 @@ class Leakgan(Gan):
     def train_real(self, data_loc=None):
         from utils.text_process import code_to_text
         from utils.text_process import get_tokenlized
-        wi_dict, iw_dict = self.init_real_trainng(data_loc)
+        wi_dict, iw_dict = self.init_real_training(data_loc)
+
         self.init_real_metric()
 
         def get_real_test_file(dict=iw_dict):
@@ -423,11 +438,16 @@ class Leakgan(Gan):
         self.pre_epoch_num = 80
         self.adversarial_epoch_num = 100
         self.log = open('experiment-log-leakgan-real.csv', 'w')
-        generate_samples_gen(self.sess, self.generator, self.batch_size, self.generate_num, self.generator_file)
-        self.gen_data_loader.create_batches(self.oracle_file)
+        codes = generate_samples_gen(self.sess, self.generator, self.batch_size, self.generate_num, self.generator_file)
+        print(codes)
+        return
+        #print(code_to_text(codes=codes, dictionary=iw_dict))
+
+
+        #self.gen_data_loader.create_batches(self.oracle_file)
 
         for a in range(1):
-            g = self.sess.run(self.generator.gen_x, feed_dict={self.generator.drop_out: 1, self.generator.train: 1})
+            self.generator.generate(self.sess, 1)
 
         print('start pre-train generator:')
         for epoch in range(self.pre_epoch_num):

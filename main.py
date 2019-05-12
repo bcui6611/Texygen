@@ -11,8 +11,11 @@ from models.rankgan.Rankgan import Rankgan
 from models.seqgan.Seqgan import Seqgan
 from models.textGan_MMD.Textgan import TextganMmd
 
+from config import Config
 
 def set_gan(gan_name):
+    config = Config()
+
     gans = dict()
     gans['seqgan'] = Seqgan
     gans['gsgan'] = Gsgan
@@ -23,7 +26,7 @@ def set_gan(gan_name):
     gans['mle'] = Mle
     try:
         Gan = gans[gan_name.lower()]
-        gan = Gan()
+        gan = Gan(config)
         gan.vocab_size = 5000
         gan.generate_num = 10000
         return gan
